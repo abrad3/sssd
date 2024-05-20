@@ -1753,6 +1753,7 @@ class TestADParamsPorted:
         assert "system error" not in log_str
 
     @staticmethod
+    @pytest.mark.ticket(bz=1078840)
     @pytest.mark.tier1_2
     def test_0022_ad_parameters_account_disabled(
             multihost, adjoin, create_aduser_group):
