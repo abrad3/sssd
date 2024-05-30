@@ -23,6 +23,8 @@
 */
 
 #include <stdio.h>
+#include <unistd.h>
+#include <string.h>
 #include <errno.h>
 #include <talloc.h>
 
@@ -147,39 +149,43 @@ static int sss_ini_config_file_from_mem(struct sss_ini *self,
 
 /* Check configuration file permissions */
 
+static bool is_running_sssd(void)
+{
+    static char exe[1024];
+    int ret;
+    const char *s = NULL;
+
+    ret = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+    if ((ret > 0) && (ret < 1024)) {
+        exe[ret] = 0;
+        s = strstr(exe, debug_prg_name);
+        if ((s != NULL) && (strlen(s) == strlen(debug_prg_name))) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static int sss_ini_access_check(struct sss_ini *self)
 {
-    uid_t uid = 0;
-    gid_t gid = 0;
     int ret;
+    uint32_t flags = INI_ACCESS_CHECK_MODE;
 
     if (!self->main_config_exists) {
         return EOK;
     }
 
-    /* 'SSSD_USER:SSSD_USER' owned config is always fine */
-    sss_sssd_user_uid_and_gid(&uid, &gid);
+    if (is_running_sssd()) {
+        flags |= INI_ACCESS_CHECK_UID | INI_ACCESS_CHECK_GID;
+    }
+
     ret = ini_config_access_check(self->file,
-                                  INI_ACCESS_CHECK_MODE |
-                                  INI_ACCESS_CHECK_UID |
-                                  INI_ACCESS_CHECK_GID,
-                                  uid, /* owned by SSSD_USER */
-                                  gid, /* owned by SSSD_USER */
+                                  flags,
+                                  geteuid(),
+                                  getegid(),
                                   S_IRUSR, /* r**------ */
                                   ALLPERMS & ~(S_IWUSR|S_IXUSR));
-    if (ret != 0) {
-        /* if SSSD runs under 'root' then 'root:root' owned config is also fine */
-        if ((getuid() == 0) && (uid != 0)) {
-            ret = ini_config_access_check(self->file,
-                                          INI_ACCESS_CHECK_MODE |
-                                          INI_ACCESS_CHECK_UID |
-                                          INI_ACCESS_CHECK_GID,
-                                          0, /* owned by root */
-                                          0, /* owned by root */
-                                          S_IRUSR, /* r**------ */
-                                          ALLPERMS & ~(S_IWUSR|S_IXUSR));
-        }
-    }
 
     return ret;
 }
@@ -284,8 +290,6 @@ static int sss_ini_add_snippets(struct sss_ini *self,
     char *msg = NULL;
     struct ini_cfgobj *modified_sssd_config = NULL;
     struct access_check snip_check;
-    uid_t uid = 0;
-    gid_t gid = 0;
 
     if (self == NULL || self->sssd_config == NULL || config_dir == NULL) {
         return EINVAL;
@@ -293,19 +297,13 @@ static int sss_ini_add_snippets(struct sss_ini *self,
 
     sss_ini_free_ra_messages(self);
 
-    snip_check.flags = INI_ACCESS_CHECK_MODE | INI_ACCESS_CHECK_UID
-                       | INI_ACCESS_CHECK_GID;
-    if (getuid() == 0) {
-        /* SSSD is configured to run under root, let's allow 'root:root'
-           owned snippets to avoid breaking existing setups */
-        snip_check.uid = 0; /* owned by root */
-        snip_check.gid = 0; /* owned by root */
-    } else {
-        /* Otherwise let's make sure snippets are 'sssd:sssd' owned. */
-        sss_sssd_user_uid_and_gid(&uid, &gid);
-        snip_check.uid = uid; /* owned by SSSD_USER */
-        snip_check.gid = gid; /* owned by SSSD_USER */
+    snip_check.flags = INI_ACCESS_CHECK_MODE;
+
+    if (is_running_sssd()) {
+        snip_check.flags |= INI_ACCESS_CHECK_UID | INI_ACCESS_CHECK_GID;
     }
+    snip_check.uid = geteuid();
+    snip_check.gid = getegid();
     snip_check.mode = S_IRUSR; /* r**------ */
     snip_check.mask = ALLPERMS & ~(S_IWUSR | S_IXUSR);
 
@@ -395,8 +393,8 @@ int sss_ini_get_int_config_value(struct sss_ini *self,
 
 /* Get string value */
 
-const char *sss_ini_get_string_config_value(struct sss_ini *self,
-                                            int *error)
+char *sss_ini_get_string_config_value(struct sss_ini *self,
+                                      int *error)
 {
     return ini_get_string_config_value(self->obj, error);
 }
@@ -404,7 +402,7 @@ const char *sss_ini_get_string_config_value(struct sss_ini *self,
 /* Create LDIF */
 
 int sss_confdb_create_ldif(TALLOC_CTX *mem_ctx,
-                           struct sss_ini *self,
+                           const struct sss_ini *self,
                            const char *only_section,
                            const char **config_ldif)
 {
@@ -424,14 +422,6 @@ int sss_confdb_create_ldif(TALLOC_CTX *mem_ctx,
     size_t ldif_len = 0;
     size_t attr_len;
     struct value_obj *obj = NULL;
-    bool section_handled = true;
-
-    if (only_section != NULL) {
-        /* If the section is specified, we must handle it, either by adding
-         * its contents or by deleting the section if it doesn't exist
-         */
-        section_handled = false;
-    }
 
     tmp_ctx = talloc_new(mem_ctx);
     if (!tmp_ctx) {
@@ -449,7 +439,7 @@ int sss_confdb_create_ldif(TALLOC_CTX *mem_ctx,
 
     for (i = 0; i < section_count; i++) {
         const char *rdn = NULL;
-        DEBUG(SSSDBG_TRACE_FUNC,
+        DEBUG(SSSDBG_TRACE_LDB,
                 "Processing config section [%s]\n", sections[i]);
         ret = parse_section(tmp_ctx, sections[i], &sec_dn, &rdn);
         if (ret != EOK) {
@@ -458,13 +448,8 @@ int sss_confdb_create_ldif(TALLOC_CTX *mem_ctx,
 
         if (only_section != NULL) {
             if (strcasecmp(only_section, sections[i])) {
-                DEBUG(SSSDBG_TRACE_FUNC, "Skipping section %s\n", sections[i]);
+                DEBUG(SSSDBG_TRACE_LDB, "Skipping section %s\n", sections[i]);
                 continue;
-            } else {
-                /* Mark the requested section as handled so that we don't
-                 * try to re-add it later
-                 */
-                section_handled = true;
             }
         }
 
@@ -488,7 +473,7 @@ int sss_confdb_create_ldif(TALLOC_CTX *mem_ctx,
         }
 
         for (j = 0; j < attr_count; j++) {
-            DEBUG(SSSDBG_TRACE_FUNC,
+            DEBUG(SSSDBG_TRACE_LDB,
                     "Processing attribute [%s]\n", attrs[j]);
             ret = sss_ini_get_config_obj(sections[i], attrs[j],
                                          self->sssd_config,
@@ -506,7 +491,7 @@ int sss_confdb_create_ldif(TALLOC_CTX *mem_ctx,
 
             ldif_attr = talloc_asprintf(tmp_ctx,
                                         "%s: %s\n", attrs[j], value);
-            DEBUG(SSSDBG_TRACE_ALL, "%s\n", ldif_attr);
+            DEBUG(SSSDBG_TRACE_LDB, "%s\n", ldif_attr);
 
             attr_len = strlen(ldif_attr);
 
@@ -536,7 +521,7 @@ int sss_confdb_create_ldif(TALLOC_CTX *mem_ctx,
         dn[dn_size-1] = '\n';
         dn[dn_size] = '\0';
 
-        DEBUG(SSSDBG_TRACE_ALL, "Section dn\n%s\n", dn);
+        DEBUG(SSSDBG_TRACE_LDB, "Section dn\n%s\n", dn);
 
         tmp_ldif = talloc_realloc(mem_ctx, ldif, char,
                                   ldif_len+dn_size+1);
@@ -552,39 +537,6 @@ int sss_confdb_create_ldif(TALLOC_CTX *mem_ctx,
 
         free_attribute_list(attrs);
         talloc_free(dn);
-    }
-
-
-    if (only_section != NULL && section_handled == false) {
-        /* If only a single section was supposed to be
-         * handled, but it wasn't found in the INI file,
-         * create an LDIF that would remove the section
-         */
-        ret = parse_section(tmp_ctx, only_section, &sec_dn, NULL);
-        if (ret != EOK) {
-            goto error;
-        }
-
-        dn = talloc_asprintf(tmp_ctx,
-                             "dn: %s,cn=config\n"
-                             "changetype: delete\n\n",
-                             sec_dn);
-        if (dn == NULL) {
-            ret = ENOMEM;
-            goto error;
-        }
-        dn_size = strlen(dn);
-
-        tmp_ldif = talloc_realloc(mem_ctx, ldif, char,
-                                  ldif_len+dn_size+1);
-        if (!tmp_ldif) {
-            ret = ENOMEM;
-            goto error;
-        }
-
-        ldif = tmp_ldif;
-        memcpy(ldif+ldif_len, dn, dn_size);
-        ldif_len += dn_size;
     }
 
     if (ldif == NULL) {

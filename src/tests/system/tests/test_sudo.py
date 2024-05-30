@@ -22,7 +22,12 @@ from sssd_test_framework.topology import KnownTopology, KnownTopologyGroup
 @pytest.mark.importance("critical")
 @pytest.mark.authorization
 @pytest.mark.topology(KnownTopologyGroup.AnyProvider)
-def test_sudo__user_allowed(client: Client, provider: GenericProvider):
+@pytest.mark.parametrize("sssd_service_user", ("root", "sssd"))
+@pytest.mark.require(
+    lambda client, sssd_service_user: ((sssd_service_user == "root") or client.features["non-privileged"]),
+    "SSSD was built without support for running under non-root",
+)
+def test_sudo__user_allowed(client: Client, provider: GenericProvider, sssd_service_user: str):
     """
     :title: One user is allowed to run command, other user is not
     :setup:
@@ -47,6 +52,7 @@ def test_sudo__user_allowed(client: Client, provider: GenericProvider):
     provider.user("user-2").add()
     provider.sudorule("test").add(user=u, host="ALL", command="/bin/ls")
 
+    client.sssd.set_service_user(sssd_service_user)
     client.sssd.common.sudo()
     client.sssd.start()
 
@@ -155,7 +161,12 @@ def test_sudo__case_sensitive_false(client: Client, provider: GenericProvider):
 @pytest.mark.importance("critical")
 @pytest.mark.authorization
 @pytest.mark.topology(KnownTopologyGroup.AnyProvider)
-def test_sudo__rules_refresh(client: Client, provider: GenericProvider):
+@pytest.mark.parametrize("sssd_service_user", ("root", "sssd"))
+@pytest.mark.require(
+    lambda client, sssd_service_user: ((sssd_service_user == "root") or client.features["non-privileged"]),
+    "SSSD was built without support for running under non-root",
+)
+def test_sudo__rules_refresh(client: Client, provider: GenericProvider, sssd_service_user: str):
     """
     :title: Sudo rules refresh works
     :setup:
@@ -179,6 +190,7 @@ def test_sudo__rules_refresh(client: Client, provider: GenericProvider):
     u = provider.user("user-1").add()
     r = provider.sudorule("test").add(user=u, host="ALL", command="/bin/ls")
 
+    client.sssd.set_service_user(sssd_service_user)
     client.sssd.common.sudo()
     client.sssd.domain["entry_cache_sudo_timeout"] = "2"
     client.sssd.start()
@@ -495,7 +507,12 @@ def test_sudo__prefer_full_refresh_over_smart_refresh(client: Client, full_inter
 @pytest.mark.authorization
 @pytest.mark.ticket(bz=1294670, gh=3969)
 @pytest.mark.topology(KnownTopologyGroup.AnyProvider)
-def test_sudo__local_users_negative_cache(client: Client, provider: LDAP):
+@pytest.mark.parametrize("sssd_service_user", ("root", "sssd"))
+@pytest.mark.require(
+    lambda client, sssd_service_user: ((sssd_service_user == "root") or client.features["non-privileged"]),
+    "SSSD was built without support for running under non-root",
+)
+def test_sudo__local_users_negative_cache(client: Client, provider: LDAP, sssd_service_user: str):
     """
     :title: Sudo responder hits negative cache for local users
     :setup:
@@ -522,6 +539,7 @@ def test_sudo__local_users_negative_cache(client: Client, provider: LDAP):
     client.local.user("user-1").add()
     client.fs.write("/etc/sudoers.d/test", "user-1 ALL=(ALL) NOPASSWD:ALL")
 
+    client.sssd.set_service_user(sssd_service_user)
     client.sssd.common.sudo()
     client.sssd.nss.update(
         entry_negative_timeout="0",  # disable standard negative cache to make sure we hit the local user case
@@ -538,3 +556,68 @@ def test_sudo__local_users_negative_cache(client: Client, provider: LDAP):
 
     result = client.tools.tshark(["-r", "/tmp/sssd.pcap", "-V", "-2", "-R", "ldap.filter"])
     assert "uid=user-1" not in result.stdout
+
+
+@pytest.mark.importance("critical")
+@pytest.mark.authorization
+@pytest.mark.topology(KnownTopologyGroup.AnyProvider)
+def test_sudo__defaults_set_no_auth_and_sudorule_has_auth_undefined(client: Client, provider: GenericProvider):
+    """
+    :title: defaults sudo entry set !authentication and a sudo rule with undefined authentication
+    :setup:
+        1. Create user "user-1"
+        2. Create an entry in cn=sudoers container defaults with option '!authenticate'
+        3. Create a sudorule named allow-user-1 to allow user-1 to run all commands on all hosts, keep
+           authentication option unset
+        4. Enable SSSD sudo responder
+        5. Start SSSD
+    :steps:
+        1. List sudo rules for "user-1"
+        2. Run "sudo /bin/ls root" as user-1
+    :expectedresults:
+        1. User is able to run sudo commands on client with password authentication
+        2. Command is successful without password authentication
+    :customerscenario: False
+    """
+    provider.user("user-1").add()
+    provider.sudorule("defaults").add(option="!authenticate")
+    provider.sudorule("allow-user-1").add(user="user-1", host="ALL", command="ALL")
+
+    client.sssd.common.sudo()
+    client.sssd.start()
+
+    assert client.auth.sudo.list("user-1", expected=["(root) ALL"])
+    assert client.auth.sudo.run("user-1", command="/bin/ls /root")
+
+
+@pytest.mark.importance("critical")
+@pytest.mark.authorization
+@pytest.mark.topology(KnownTopologyGroup.AnyProvider)
+def test_sudo__defaults_set_no_auth_and_sudo_rule_has_mandatory_auth(client: Client, provider: GenericProvider):
+    """
+    :title: defaults sudo entry set !authentication and a sudorule has mandatory authentication
+    :setup:
+        1. Create user "user-1"
+        2. Create a sudorule named defaults with option '!authenticate'
+        3. Create a sudorule named allow-user-1 to allow user-1 to run all commands on all hosts with authentication
+           forced
+        4. Enable SSSD sudo responder
+        5. Start SSSD
+    :steps:
+        1. List sudo rules for "user-1"
+        2. Run "sudo /bin/ls root" as user-1
+    :expectedresults:
+        1. User should be able to run sudo commands on client with mandatory password authentication
+        2. Command is successful only with password authentication
+    :customerscenario: False
+    """
+    provider.user("user-1").add()
+    provider.sudorule("defaults").add(option="!authenticate")
+    provider.sudorule("allow-user-1").add(user="user-1", host="ALL", command="ALL", option="authenticate")
+
+    client.sssd.common.sudo()
+    client.sssd.start()
+
+    assert client.auth.sudo.list("user-1", expected=["(root) PASSWD: ALL"])
+    assert not client.auth.sudo.run("user-1", command="/bin/ls /root")
+    assert client.auth.sudo.run("user-1", "Secret123", command="/bin/ls /root")

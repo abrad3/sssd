@@ -159,10 +159,12 @@ struct tevent_req *sdap_get_initgr_send(TALLOC_CTX *memctx,
                                         struct sdap_handle *sh,
                                         struct sdap_id_ctx *id_ctx,
                                         struct sdap_id_conn_ctx *conn,
+                                        struct sdap_search_base **search_bases,
                                         const char *name,
                                         int filter_type,
                                         const char *extra_value,
-                                        const char **grp_attrs);
+                                        const char **grp_attrs,
+                                        bool set_non_posix);
 int sdap_get_initgr_recv(struct tevent_req *req);
 
 struct tevent_req *sdap_exop_modify_passwd_send(TALLOC_CTX *memctx,

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE reference PUBLIC "-//OASIS//DTD DocBook V4.4//EN"
-"http://www.oasis-open.org/docbook/xml/4.4/docbookx.dtd">
+<!DOCTYPE reference PUBLIC "-//OASIS//DTD DocBook V4.5//EN"
+"http://www.oasis-open.org/docbook/xml/4.5/docbookx.dtd">
 <reference>
 <title>SSSD Manual pages</title>
 <refentry>
@@ -26,6 +26,16 @@
             <arg choice='opt'><replaceable>PROXY_COMMAND</replaceable></arg>
         </cmdsynopsis>
     </refsynopsisdiv>
+
+    <refsect1 id='lifecycle'>
+        <title>LIFE-CYCLE</title>
+        <para>
+            This tool is deprecated and will be removed in the future.
+            Consider using the more reliable
+            <command>sss_ssh_knownhosts</command> instead.
+
+        </para>
+    </refsect1>
 
     <refsect1 id='description'>
         <title>DESCRIPTION</title>

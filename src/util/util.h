@@ -33,11 +33,13 @@
 #include <netinet/in.h>
 #include <limits.h>
 #include <sys/un.h>
+#include <sys/capability.h>
 
 #include <talloc.h>
 #include <tevent.h>
 #include <ldb.h>
 #include <dhash.h>
+#include <krb5.h>
 
 #include "confdb/confdb.h"
 #include "shared/io.h"
@@ -90,12 +92,6 @@
 
 #define SSSD_MAIN_OPTS SSSD_DEBUG_OPTS
 
-#define SSSD_SERVER_OPTS(uid, gid) \
-        {"uid", 0, POPT_ARG_INT, &uid, 0, \
-          _("The user ID to run the server as"), NULL}, \
-        {"gid", 0, POPT_ARG_INT, &gid, 0, \
-          _("The group ID to run the server as"), NULL},
-
 #define SSSD_CONFIG_OPTS(opt_config_file) \
         {"config", 'c', POPT_ARG_STRING, &opt_config_file, 0, \
          _("Specify a non-default config file"), NULL}, \
@@ -114,7 +110,7 @@ extern int socket_activated;
 #define FLAGS_DAEMON 0x0001
 #define FLAGS_INTERACTIVE 0x0002
 #define FLAGS_PID_FILE 0x0004
-#define FLAGS_GEN_CONF 0x0008
+/* 0x0008 was used by FLAGS_GEN_CONF that was removed; can be reused */
 #define FLAGS_NO_WATCHDOG 0x0010
 
 enum sssd_exit_status {
@@ -215,7 +211,6 @@ int check_pidfile(const char *file);
 int pidfile(const char *file);
 int server_setup(const char *name, bool is_responder,
                  int flags,
-                 uid_t uid, gid_t gid,
                  const char *db_file,
                  const char *conf_entry,
                  struct main_context **main_ctx,
@@ -243,6 +238,8 @@ int sss_mem_attach(TALLOC_CTX *mem_ctx, void *ptr, void_destructor_fn_t *fn);
  */
 int sss_erase_talloc_mem_securely(void *p);
 void sss_erase_mem_securely(void *p, size_t size);
+void sss_erase_krb5_data_securely(krb5_data *data);
+void sss_erase_krb5_creds_securely(krb5_creds *cred);
 
 /* from usertools.c */
 char *get_uppercase_realm(TALLOC_CTX *memctx, const char *name);
@@ -393,8 +390,6 @@ const char * const * get_known_services(void);
 
 errno_t sss_user_by_name_or_uid(const char *input, uid_t *_uid, gid_t *_gid);
 void sss_sssd_user_uid_and_gid(uid_t *_uid, gid_t *_gid);
-void sss_set_sssd_user_eid(void);
-void sss_restore_sssd_user_eid(void);
 
 int split_on_separator(TALLOC_CTX *mem_ctx, const char *str,
                        const char sep, bool trim, bool skip_empty,
@@ -749,13 +744,16 @@ errno_t mod_defaults_list(TALLOC_CTX *mem_ctx, const char **defaults_list,
                           char **mod_list, char ***_list);
 
 /* from become_user.c */
-errno_t become_user(uid_t uid, gid_t gid);
+errno_t become_user(uid_t uid, gid_t gid, bool keep_set_uid);
 struct sss_creds;
 errno_t switch_creds(TALLOC_CTX *mem_ctx,
                      uid_t uid, gid_t gid,
                      int num_gids, gid_t *gids,
                      struct sss_creds **saved_creds);
 errno_t restore_creds(struct sss_creds *saved_creds);
+errno_t sss_log_caps_to_str(bool only_non_zero, char **_str);
+errno_t sss_drop_cap(cap_value_t cap);
+void sss_drop_all_caps(void);
 
 /* from sss_semanage.c */
 /* Please note that libsemange relies on files and directories created with
@@ -817,8 +815,7 @@ int sss_remove_subtree(const char *root);
 
 int sss_create_dir(const char *parent_dir_path,
                    const char *dir_name,
-                   mode_t mode,
-                   uid_t uid, gid_t gid);
+                   mode_t mode);
 
 /* from selinux.c */
 int selinux_file_context(const char *dst_name);

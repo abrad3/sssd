@@ -1991,9 +1991,16 @@ errno_t do_card(TALLOC_CTX *mem_ctx, struct p11_ctx *p11_ctx,
     /* login: do we need to check for Login Required? */
     if (mode == OP_AUTH) {
         DEBUG(SSSDBG_TRACE_ALL, "Login required.\n");
-        if (pin != NULL) {
+        DEBUG(SSSDBG_TRACE_ALL, "Token flags [%lu].\n", token_info.flags);
+        if ((pin != NULL)
+            || (token_info.flags & CKF_PROTECTED_AUTHENTICATION_PATH)) {
+
+            if (token_info.flags & CKF_PROTECTED_AUTHENTICATION_PATH) {
+                DEBUG(SSSDBG_TRACE_ALL, "Protected authentication path.\n");
+                pin = NULL;
+            }
             rv = module->C_Login(session, CKU_USER, discard_const(pin),
-                                 strlen(pin));
+                                (pin != NULL) ? strlen(pin) : 0);
             if (rv == CKR_PIN_LOCKED) {
                 DEBUG(SSSDBG_OP_FAILURE, "C_Login failed: PIN locked\n");
                 ret = ERR_P11_PIN_LOCKED;

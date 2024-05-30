@@ -211,13 +211,16 @@ int pidfile(const char *file)
     int ret, err;
     size_t size;
     ssize_t written;
+    mode_t old_umask;
 
     ret = check_pidfile(file);
     if (ret != EOK) {
         return ret;
     }
 
+    old_umask = umask(0133);
     fd = open(file, O_CREAT | O_WRONLY | O_EXCL, 0644);
+    umask(old_umask);
     err = errno;
     if (fd == -1) {
         return err;
@@ -474,7 +477,6 @@ static const char *get_pid_path(void)
 
 int server_setup(const char *name, bool is_responder,
                  int flags,
-                 uid_t uid, gid_t gid,
                  const char *db_file,
                  const char *conf_entry,
                  struct main_context **main_ctx,
@@ -492,7 +494,6 @@ int server_setup(const char *name, bool is_responder,
     struct logrotate_ctx *lctx;
     char *locale;
     int watchdog_interval;
-    pid_t my_pid;
     char *pidfile_name;
     int cfg_debug_level = SSSDBG_INVALID;
     bool dumpable = true;
@@ -517,28 +518,16 @@ int server_setup(const char *name, bool is_responder,
         return ENOMEM;
     }
 
-    my_pid = getpid();
-    ret = setpgid(my_pid, my_pid);
-    if (ret != EOK) {
-        ret = errno;
-        DEBUG(SSSDBG_MINOR_FAILURE,
-              "Failed setting process group: %s[%d]. "
-              "We might leak processes in case of failure\n",
-              sss_strerror(ret), ret);
-    }
-
-    if (!is_socket_activated()) {
-        ret = chown_debug_file(NULL, uid, gid);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_MINOR_FAILURE,
-                  "Cannot chown the debug files, debugging might not work!\n");
-        }
-
-        ret = become_user(uid, gid);
-        if (ret != EOK) {
-            DEBUG(SSSDBG_FUNC_DATA,
-                  "Cannot become user [%"SPRIuid"][%"SPRIgid"].\n", uid, gid);
-            return ret;
+    if (!(flags & FLAGS_DAEMON)) { /* become_daemon() will take care otherwise */
+        if (getpgrp() != getpid()) {
+            ret = setpgid(0, 0);
+            if (ret != EOK) {
+                ret = errno;
+                DEBUG(SSSDBG_MINOR_FAILURE,
+                      "Failed setting process group: %s[%d]. "
+                      "We might leak processes in case of failure\n",
+                      sss_strerror(ret), ret);
+            }
         }
     }
 
@@ -784,6 +773,26 @@ int server_setup(const char *name, bool is_responder,
 
 void server_loop(struct main_context *main_ctx)
 {
+    char *caps;
+    int ret;
+
+    ret = sss_log_caps_to_str(true, &caps);
+    if (ret != 0) {
+        DEBUG(SSSDBG_IMPORTANT_INFO, "Failed to log current capabilities\n");
+    } else {
+        DEBUG(SSSDBG_IMPORTANT_INFO,
+              "Entering main loop under uid=%"SPRIuid" (euid=%"SPRIuid") : "
+              "gid=%"SPRIgid" (egid=%"SPRIgid") with SECBIT_KEEP_CAPS = %d"
+              " and following capabilities:\n%s",
+              getuid(), geteuid(), getgid(), getegid(),
+              prctl(PR_GET_KEEPCAPS, 0, 0, 0, 0),
+              caps ? caps : "   (nothing)\n");
+        if (caps != NULL) {
+            DEBUG(SSSDBG_CRIT_FAILURE, "Non empty capabilities set!\n");
+        }
+        talloc_free(caps);
+    }
+
     /* wait for events - this is where the server sits for most of its
        life */
     tevent_loop_wait(main_ctx->event_ctx);

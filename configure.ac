@@ -171,7 +171,6 @@ WITH_CIFS_PLUGIN_PATH
 WITH_WINBIND_PLUGIN_PATH
 WITH_SELINUX
 WITH_IPA_GETKEYTAB
-WITH_SEMANAGE
 WITH_AD_GPO_DEFAULT
 WITH_GPO_CACHE_PATH
 WITH_NOLOGIN_SHELL
@@ -182,10 +181,12 @@ WITH_SUDO_LIB_PATH
 WITH_AUTOFS
 WITH_FILES_PROVIDER
 WITH_EXTENDED_ENUMERATION_SUPPORT
+WITH_CONF_SERVICE_USER_SUPPORT
 WITH_SUBID
 WITH_SUBID_LIB_PATH
 WITH_PASSKEY
 WITH_SSH
+WITH_SSH_KNOWN_HOSTS_PROXY
 WITH_IFP
 WITH_LIBSIFP
 WITH_SYSLOG
@@ -222,7 +223,6 @@ m4_include([src/external/nsupdate.m4])
 m4_include([src/external/libkeyutils.m4])
 m4_include([src/external/libkrad.m4])
 m4_include([src/external/libnl.m4])
-m4_include([src/external/systemd.m4])
 m4_include([src/external/pac_responder.m4])
 m4_include([src/external/cifsidmap.m4])
 m4_include([src/external/signal.m4])
@@ -279,9 +279,13 @@ AS_IF([test x$HAVE_NSCD], [
 
 WITH_INITSCRIPT
 AS_IF([test x$initscript = xsystemd], [
+    m4_include([src/external/systemd.m4])
     WITH_SYSTEMD_UNIT_DIR
     WITH_SYSTEMD_CONF_DIR
 ], [
+    AS_IF([test x$syslog = xjournald], [
+        AC_MSG_ERROR(['--with-syslog=journald' requires '--with-initscript=systemd'])
+    ])
     CHECK_SERVICE_EXECUTABLE
 ])
 
@@ -513,6 +517,17 @@ AS_IF([test x$have_check = x], [
     AC_CHECK_HEADERS([check.h],,AC_MSG_ERROR([Could not find CHECK headers]))
 ])
 
+PKG_CHECK_MODULES([CAP], [libcap], [have_libcap=1], [have_libcap=])
+AS_IF([test x$have_libcap = x], [
+    AC_MSG_ERROR([libcap is missing])
+], [
+    AC_CHECK_HEADERS([sys/capability.h],,AC_MSG_ERROR([Could not find sys/capability.h headers]))
+])
+AC_PATH_PROG([SETCAP], [setcap], [false])
+AS_IF([test x$SETCAP == xfalse], [
+    AC_MSG_WARN([setcap missing, capabilities cannot be set during make install])
+])
+
 AC_PATH_PROG([DOXYGEN], [doxygen], [false])
 AM_CONDITIONAL([HAVE_DOXYGEN], [test x$DOXYGEN != xfalse ])
 
@@ -543,7 +558,8 @@ my_srcdir=`readlink -f $srcdir`
 AC_DEFINE_UNQUOTED([ABS_SRC_DIR], ["$my_srcdir"], [Absolute path to the source directory])
 
 AC_CONFIG_FILES([Makefile contrib/sssd.spec src/examples/rwtab src/doxy.config
-                 contrib/sssd-pcsc.rules
+                 contrib/sssd-pcsc.rules contrib/90-sssd-token-access.rules
+                 contrib/sssd-tmpfiles.conf
                  src/sysv/sssd src/sysv/gentoo/sssd src/sysv/gentoo/sssd-kcm
                  po/Makefile.in src/man/Makefile src/tests/cwrap/Makefile
                  src/tests/intg/Makefile src/tests/test_CA/Makefile

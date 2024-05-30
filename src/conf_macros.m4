@@ -35,12 +35,12 @@ AC_DEFUN([WITH_PLUGIN_PATH],
 AC_DEFUN([WITH_PID_PATH],
   [ AC_ARG_WITH([pid-path],
                 [AC_HELP_STRING([--with-pid-path=PATH],
-                                [Where to store pid files for the SSSD [/var/run]]
+                                [Where to store pid files for the SSSD [/run/sssd/]]
                                )
                 ]
                )
-    config_pidpath="\"VARDIR\"/run"
-    pidpath="${localstatedir}/run"
+    config_pidpath="/run/sssd"
+    pidpath="/run/sssd"
     if test x"$with_pid_path" != x; then
         config_pidpath=$with_pid_path
         pidpath=$with_pid_path
@@ -520,6 +520,7 @@ AC_DEFUN([WITH_LIBNL],
             AC_MSG_ERROR([Libnl required, but not available])
         fi
     fi
+    AM_CONDITIONAL([HAVE_LIBNL], [test x"$HAVE_LIBNL" = x1])
   ])
 
 AC_DEFUN([WITH_NOLOGIN_SHELL],
@@ -707,6 +708,22 @@ AC_DEFUN([WITH_SSH],
     AM_CONDITIONAL([BUILD_SSH], [test x"$with_ssh" = xyes])
   ])
 
+AC_DEFUN([WITH_SSH_KNOWN_HOSTS_PROXY],
+  [ AC_ARG_WITH([ssh-known-hosts-proxy],
+                [AC_HELP_STRING([--with-ssh-known-hosts-proxy],
+                                [Whether to build the sss_ssh_knownhostsproxy tool [no]]
+                               )
+                ],
+                [with_ssh_know_hosts_proxy=$withval],
+                with_ssh_know_hosts_proxy=no
+               )
+
+    if test x"$with_ssh" = xyes -a x"$with_ssh_know_hosts_proxy" = xyes; then
+        AC_DEFINE(BUILD_SSH_KNOWN_HOSTS_PROXY, 1, [whether to build the sss_ssh_knownhostsproxy tool])
+    fi
+    AM_CONDITIONAL([BUILD_SSH_KNOWN_HOSTS_PROXY], [test x"$with_ssh" = xyes -a x"$with_ssh_know_hosts_proxy" = xyes])
+  ])
+
 AC_DEFUN([WITH_IFP],
   [ AC_ARG_WITH([infopipe],
                 [AC_HELP_STRING([--with-infopipe],
@@ -821,6 +838,25 @@ AC_DEFUN([WITH_SSSD_USER],
     if test x"$SSSD_USER" != xroot; then
         AC_DEFINE(SSSD_NON_ROOT_USER, 1, [whether support of non root user configured])
     fi
+  ])
+
+AC_DEFUN([WITH_CONF_SERVICE_USER_SUPPORT],
+  [ AC_ARG_WITH([conf-service-user-support],
+                [AC_HELP_STRING([--with-conf-service-user-support],
+                                [Whether to build support for sssd.conf::user option [no].
+                                 Requires "--with-sssd-user=..." to be used.
+                                 Please take a note that this feature is deprecated and
+                                 might be removed in further releases.]
+                               )
+                ],
+                [with_conf_service_user_support=$withval],
+                with_conf_service_user_support=no
+               )
+
+    if test x"$with_conf_service_user_support" = xyes; then
+        AC_DEFINE(BUILD_CONF_SERVICE_USER_SUPPORT, 1, [Whether to build support for sssd.conf::user option])
+    fi
+    AM_CONDITIONAL([BUILD_CONF_SERVICE_USER_SUPPORT], [test x"$with_conf_service_user_support" = xyes])
   ])
 
   AC_DEFUN([WITH_AD_GPO_DEFAULT],

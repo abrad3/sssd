@@ -24,6 +24,7 @@
 
 #include "providers/data_provider.h"
 #include "providers/fail_over.h"
+#include "providers/be_netlink.h"
 #include "providers/be_refresh.h"
 #include "providers/data_provider/dp.h"
 #include "util/child_common.h"
@@ -79,8 +80,6 @@ struct be_ctx {
     const char *identity;
     const char *conf_path;
     const char *sbus_name;
-    uid_t uid;
-    gid_t gid;
     char override_space;
     struct session_recording_conf sr_conf;
     struct be_failover_ctx *be_fo;
@@ -106,6 +105,7 @@ struct be_ctx {
     struct be_ptask *check_if_online_ptask;
 
     struct be_refresh_ctx *refresh_ctx;
+    struct be_netlink_ctx *nlctx;
 
     size_t check_online_ref_count;
     int check_online_retry_delay;

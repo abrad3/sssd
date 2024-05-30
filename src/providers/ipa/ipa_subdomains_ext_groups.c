@@ -883,7 +883,7 @@ static void ipa_add_ad_memberships_get_next(struct tevent_req *req)
                                  state->sdap_id_ctx->conn,
                                  fq_name,
                                  BE_FILTER_NAME,
-                                 false, false);
+                                 false, false, false);
     if (subreq == NULL) {
         DEBUG(SSSDBG_OP_FAILURE, "groups_get_send failed.\n");
         ret = ENOMEM;
@@ -985,7 +985,7 @@ search_user_or_group_by_sid_str(TALLOC_CTX *mem_ctx,
         break;
     case ENOENT:
         DEBUG(SSSDBG_TRACE_FUNC,
-              "Could not find %s in sysdb", sid_str);
+              "Could not find %s in sysdb\n", sid_str);
         break;
     default:
         DEBUG(SSSDBG_OP_FAILURE,

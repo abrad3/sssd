@@ -165,7 +165,8 @@ struct tevent_req *users_get_send(TALLOC_CTX *memctx,
                                   const char *filter_value,
                                   int filter_type,
                                   const char *extra_value,
-                                  bool noexist_delete)
+                                  bool noexist_delete,
+                                  bool set_non_posix)
 {
     struct tevent_req *req;
     struct users_get_state *state;
@@ -202,7 +203,7 @@ struct tevent_req *users_get_send(TALLOC_CTX *memctx,
     state->filter_value = filter_value;
     state->filter_type = filter_type;
 
-    if (state->domain->type == DOM_TYPE_APPLICATION) {
+    if (state->domain->type == DOM_TYPE_APPLICATION || set_non_posix) {
         state->non_posix = true;
     }
 
@@ -582,7 +583,8 @@ static void users_get_done(struct tevent_req *subreq)
             ret = sdap_fallback_local_user(state, state->shortname, uid, &usr_attrs);
             if (ret == EOK) {
                 ret = sdap_save_user(state, state->ctx->opts, state->domain,
-                                     usr_attrs[0], NULL, NULL, 0);
+                                     usr_attrs[0], NULL, NULL, 0,
+                                     state->non_posix);
             }
         }
     }
@@ -665,7 +667,8 @@ struct tevent_req *groups_get_send(TALLOC_CTX *memctx,
                                    const char *filter_value,
                                    int filter_type,
                                    bool noexist_delete,
-                                   bool no_members)
+                                   bool no_members,
+                                   bool set_non_posix)
 {
     struct tevent_req *req;
     struct groups_get_state *state;
@@ -703,7 +706,7 @@ struct tevent_req *groups_get_send(TALLOC_CTX *memctx,
     state->filter_value = filter_value;
     state->filter_type = filter_type;
 
-    if (state->domain->type == DOM_TYPE_APPLICATION) {
+    if (state->domain->type == DOM_TYPE_APPLICATION || set_non_posix) {
         state->non_posix = true;
     }
 
@@ -991,7 +994,8 @@ static void groups_get_done(struct tevent_req *subreq)
                                 state->filter_value,
                                 state->filter_type,
                                 NULL,
-                                state->noexist_delete);
+                                state->noexist_delete,
+                                false);
         if (subreq == NULL) {
             tevent_req_error(req, ENOMEM);
             return;
@@ -1135,6 +1139,7 @@ struct groups_by_user_state {
     struct sdap_id_op *op;
     struct sysdb_ctx *sysdb;
     struct sss_domain_info *domain;
+    struct sdap_search_base **search_bases;
 
     const char *filter_value;
     int filter_type;
@@ -1151,15 +1156,17 @@ static int groups_by_user_retry(struct tevent_req *req);
 static void groups_by_user_connect_done(struct tevent_req *subreq);
 static void groups_by_user_done(struct tevent_req *subreq);
 
-static struct tevent_req *groups_by_user_send(TALLOC_CTX *memctx,
-                                              struct tevent_context *ev,
-                                              struct sdap_id_ctx *ctx,
-                                              struct sdap_domain *sdom,
-                                              struct sdap_id_conn_ctx *conn,
-                                              const char *filter_value,
-                                              int filter_type,
-                                              const char *extra_value,
-                                              bool noexist_delete)
+struct tevent_req *groups_by_user_send(TALLOC_CTX *memctx,
+                                       struct tevent_context *ev,
+                                       struct sdap_id_ctx *ctx,
+                                       struct sdap_domain *sdom,
+                                       struct sdap_id_conn_ctx *conn,
+                                       struct sdap_search_base **search_bases,
+                                       const char *filter_value,
+                                       int filter_type,
+                                       const char *extra_value,
+                                       bool noexist_delete,
+                                       bool set_non_posix)
 {
     struct tevent_req *req;
     struct groups_by_user_state *state;
@@ -1187,8 +1194,9 @@ static struct tevent_req *groups_by_user_send(TALLOC_CTX *memctx,
     state->extra_value = extra_value;
     state->domain = sdom->dom;
     state->sysdb = sdom->dom->sysdb;
+    state->search_bases = search_bases;
 
-    if (state->domain->type == DOM_TYPE_APPLICATION) {
+    if (state->domain->type == DOM_TYPE_APPLICATION || set_non_posix) {
         state->non_posix = true;
     }
 
@@ -1249,10 +1257,12 @@ static void groups_by_user_connect_done(struct tevent_req *subreq)
                                   sdap_id_op_handle(state->op),
                                   state->ctx,
                                   state->conn,
+                                  state->search_bases,
                                   state->filter_value,
                                   state->filter_type,
                                   state->extra_value,
-                                  state->attrs);
+                                  state->attrs,
+                                  state->non_posix);
     if (!subreq) {
         tevent_req_error(req, ENOMEM);
         return;
@@ -1421,7 +1431,8 @@ sdap_handle_acct_req_send(TALLOC_CTX *mem_ctx,
                                 ar->filter_value,
                                 ar->filter_type,
                                 ar->extra_value,
-                                noexist_delete);
+                                noexist_delete,
+                                false);
         break;
 
     case BE_REQ_GROUP: /* group */
@@ -1429,7 +1440,7 @@ sdap_handle_acct_req_send(TALLOC_CTX *mem_ctx,
                                  sdom, conn,
                                  ar->filter_value,
                                  ar->filter_type,
-                                 noexist_delete, false);
+                                 noexist_delete, false, false);
         break;
 
     case BE_REQ_INITGROUPS: /* init groups for user */
@@ -1442,11 +1453,11 @@ sdap_handle_acct_req_send(TALLOC_CTX *mem_ctx,
         }
 
         subreq = groups_by_user_send(state, be_ctx->ev, id_ctx,
-                                     sdom, conn,
+                                     sdom, conn, NULL,
                                      ar->filter_value,
                                      ar->filter_type,
                                      ar->extra_value,
-                                     noexist_delete);
+                                     noexist_delete, false);
         break;
 
     case BE_REQ_SUBID_RANGES:
@@ -1545,7 +1556,8 @@ sdap_handle_acct_req_send(TALLOC_CTX *mem_ctx,
                                 ar->filter_value,
                                 ar->filter_type,
                                 ar->extra_value,
-                                noexist_delete);
+                                noexist_delete,
+                                false);
         break;
 
     default: /*fail*/
@@ -1741,7 +1753,7 @@ static struct tevent_req *get_user_and_group_send(TALLOC_CTX *memctx,
     subreq = groups_get_send(req, state->ev, state->id_ctx,
                              state->sdom, state->conn,
                              state->filter_val, state->filter_type,
-                             state->noexist_delete, false);
+                             state->noexist_delete, false, false);
     if (subreq == NULL) {
         DEBUG(SSSDBG_OP_FAILURE, "groups_get_send failed.\n");
         ret = ENOMEM;
@@ -1795,7 +1807,7 @@ static void get_user_and_group_groups_done(struct tevent_req *subreq)
     subreq = users_get_send(req, state->ev, state->id_ctx,
                             state->sdom, user_conn,
                             state->filter_val, state->filter_type, NULL,
-                            state->noexist_delete);
+                            state->noexist_delete, false);
     if (subreq == NULL) {
         DEBUG(SSSDBG_OP_FAILURE, "users_get_send failed.\n");
         tevent_req_error(req, ENOMEM);

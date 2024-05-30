@@ -61,7 +61,7 @@ static errno_t sec_get(TALLOC_CTX *mem_ctx,
         goto done;
     }
 
-    buf = sss_iobuf_init_steal(tmp_ctx, data, len);
+    buf = sss_iobuf_init_steal(tmp_ctx, data, len, true);
     if (buf == NULL) {
         DEBUG(SSSDBG_CRIT_FAILURE, "Cannot init the iobuf\n");
         ret = EIO;
@@ -213,7 +213,7 @@ static errno_t secdb_container_url_req(TALLOC_CTX *mem_ctx,
         goto done;
     }
 
-    ret = sss_sec_new_req(tmp_ctx, sctx, url, geteuid(), &sreq);
+    ret = sss_sec_new_req(tmp_ctx, sctx, url, &sreq);
     if (ret != EOK) {
         goto done;
     }
@@ -241,7 +241,7 @@ static errno_t secdb_cc_url_req(TALLOC_CTX *mem_ctx,
         return ENOMEM;
     }
 
-    ret = sss_sec_new_req(tmp_ctx, sctx, secdb_url, geteuid(), &sreq);
+    ret = sss_sec_new_req(tmp_ctx, sctx, secdb_url, &sreq);
     if (ret != EOK) {
         goto done;
     }
@@ -310,7 +310,7 @@ static errno_t secdb_dfl_url_req(TALLOC_CTX *mem_ctx,
         goto done;
     }
 
-    ret = sss_sec_new_req(tmp_ctx, sctx, url, geteuid(), &sreq);
+    ret = sss_sec_new_req(tmp_ctx, sctx, url, &sreq);
     if (ret != EOK) {
         goto done;
     }
@@ -683,7 +683,8 @@ static struct tevent_req *ccdb_secdb_set_default_send(TALLOC_CTX *mem_ctx,
 
     iobuf = sss_iobuf_init_readonly(state,
                                     (const uint8_t *) uuid_str,
-                                    UUID_STR_SIZE);
+                                    UUID_STR_SIZE,
+                                    false);
     if (iobuf == NULL) {
         ret = ENOMEM;
         goto immediate;

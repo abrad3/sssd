@@ -4,11 +4,11 @@ if HAVE_DEVSHM
 endif
 
 if WITH_JOURNALD
+    extra_distcheck_flags += --with-initscript=systemd
     extra_distcheck_flags += --with-syslog=journald
 endif
 
 DISTCHECK_CONFIGURE_FLAGS = --with-ldb-lib-dir="$$dc_install_base"/lib/ldb \
-                            --disable-dbus-tests \
                             $(extra_distcheck_flags) \
                             $(AUX_DISTCHECK_CONFIGURE_FLAGS)
 CLEANFILES = $(NULL)
@@ -26,6 +26,7 @@ SUBDIRS += . src/tests/cwrap src/tests/intg src/tests/test_CA \
 # Some old versions of automake don't define builddir
 builddir ?= .
 
+SETCAP = @SETCAP@
 DOXYGEN = @DOXYGEN@
 
 DISTSETUPOPTS =
@@ -90,25 +91,35 @@ sssdkcmdatadir = $(datadir)/sssd-kcm
 deskprofilepath = $(sss_statedir)/deskprofile
 
 if HAVE_SYSTEMD_UNIT
+
 ifp_dbus_exec_comment = \# If system is configured to use systemd ifp service ("SystemdService=") then "Exec=" and "User=" options are not used
 ifp_dbus_exec_cmd = $(sssdlibexecdir)/sssd_ifp --socket-activated
 ifp_systemdservice = SystemdService=sssd-ifp.service
 # SSSD requires a configuration file (either /etc/sssd/sssd.conf,
 # or some snippet under /etc/sssd/sssd.conf.d/) to be present.
 condconfigexists = ConditionPathExists=\|/etc/sssd/sssd.conf\nConditionDirectoryNotEmpty=\|/etc/sssd/conf.d/
-# If sssd is configured with --with-sssd-user=<user> where <user>!='root'
-# but is actually run under the root we need CAP_DAC_OVERRIDE to access
-# files owned by <user>:<user>
-# If sssd is really run under non-root account that doesn't have this cap
-# originally then it's addition to CapabilityBoundingSet doesn't matter.
+
+# Bounding set needs to list capabilities required by ldap/krb5/selinux_childs, otherwise they can't gain it.
+capabilities = CapabilityBoundingSet= CAP_CHOWN CAP_DAC_OVERRIDE CAP_SETGID CAP_SETUID
+
+if BUILD_CONF_SERVICE_USER_SUPPORT
+# If non-root service user is supported, monitor might need SET-ID to switch user (deprecated 'sssd.conf::user' option)
+capabilities += \n\# Comment this out if support of deprecated "sssd.conf::user" option is not required:\nAmbientCapabilities= CAP_SETGID CAP_SETUID
+endif # BUILD_CONF_SERVICE_USER_SUPPORT
+
 if SSSD_NON_ROOT_USER
-additional_caps = CAP_DAC_OVERRIDE
-endif
+nss_service_user_group = User=$(SSSD_USER)\nGroup=$(SSSD_USER)
+nss_socket_user_group = SocketUser=$(SSSD_USER)\nSocketGroup=$(SSSD_USER)
+supplementary_groups = \# If service configured to be run under "root", uncomment "SupplementaryGroups"\n\#SupplementaryGroups=$(SSSD_USER)
+else
+supplementary_groups = \# Note: SSSD package was built without support of running as non-privileged user
+endif # SSSD_NON_ROOT_USER
+
 else
 ifp_dbus_exec_comment = \# "sss_signal" is used to force SSSD monitor to trigger "sssd_ifp" reconnection to dbus
 ifp_dbus_exec_cmd = $(sssdlibexecdir)/sss_signal
 ifp_systemdservice =
-endif
+endif # HAVE_SYSTEMD_UNIT
 
 secdbpath = @secdbpath@
 
@@ -148,6 +159,7 @@ ACLOCAL_AMFLAGS = -I m4 -I .
 if BUILD_SSH
 bin_PROGRAMS = \
     sss_ssh_authorizedkeys \
+    sss_ssh_knownhosts \
     sss_ssh_knownhostsproxy
 endif
 
@@ -652,6 +664,10 @@ SSSD_LIBS = \
     $(SELINUX_LIBS) \
     $(TDB_LIBS)
 
+if HAVE_SYSTEMD_UNIT
+    SSSD_LIBS += $(SYSTEMD_DAEMON_LIBS)
+endif
+
 PYTHON_BINDINGS_LIBS = \
     $(TALLOC_LIBS) \
     $(POPT_LIBS) \
@@ -674,7 +690,6 @@ if BUILD_SELINUX
 endif
 
 dist_noinst_HEADERS = \
-    src/monitor/monitor.h \
     src/sss_iface/sbus_sss_arguments.h \
     src/sss_iface/sbus_sss_client_async.h \
     src/sss_iface/sbus_sss_client_properties.h \
@@ -732,7 +747,6 @@ dist_noinst_HEADERS = \
     src/responder/kcm/secrets/secrets.h \
     src/responder/kcm/secrets/sec_pvt.h \
     src/util/nss_dl_load.h \
-    src/monitor/monitor.h \
     src/responder/common/responder.h \
     src/responder/common/responder_packet.h \
     src/responder/common/cache_req/cache_req.h \
@@ -812,7 +826,6 @@ dist_noinst_HEADERS = \
     src/db/sysdb_subid.h \
     src/db/sysdb_domain_resolution_order.h \
     src/db/sysdb_passkey_user_verification.h \
-    src/db/sysdb_computer.h \
     src/db/sysdb_iphosts.h \
     src/db/sysdb_ipnetworks.h \
     src/confdb/confdb.h \
@@ -829,6 +842,7 @@ dist_noinst_HEADERS = \
     src/providers/data_provider/dp_iface.h \
     src/providers/backend.h \
     src/providers/be_dyndns.h \
+    src/providers/be_netlink.h \
     src/providers/be_ptask_private.h \
     src/providers/be_ptask.h \
     src/providers/be_refresh.h \
@@ -1252,7 +1266,6 @@ libsss_util_la_SOURCES = \
     src/db/sysdb_iphosts.c \
     src/db/sysdb_ipnetworks.c \
     src/util/sss_pam_data.c \
-    src/db/sysdb_computer.c \
     src/db/sysdb_subid.c \
     src/util/util.c \
     src/util/util_ext.c \
@@ -1286,6 +1299,7 @@ libsss_util_la_SOURCES = \
     src/util/well_known_sids.c \
     src/util/string_utils.c \
     src/util/become_user.c \
+    src/util/capabilities.c \
     src/util/util_watchdog.c \
     src/util/sss_ptr_hash.c \
     src/util/files.c \
@@ -1297,12 +1311,11 @@ libsss_util_la_SOURCES = \
     $(NULL)
 libsss_util_la_CFLAGS = \
     $(AM_CFLAGS) \
-    $(SYSTEMD_LOGIN_CFLAGS) \
     $(NULL)
 libsss_util_la_LIBADD = \
     $(LIBADD_TIMER) \
     $(SSSD_LIBS) \
-    $(SYSTEMD_LOGIN_LIBS) \
+    $(CAP_LIBS) \
     $(UNICODE_LIBS) \
     $(PCRE_LIBS) \
     $(INI_CONFIG_LIBS) \
@@ -1511,16 +1524,14 @@ endif
 ####################
 sssd_SOURCES = \
     src/monitor/monitor.c \
-    src/monitor/monitor_netlink.c \
+    src/monitor/monitor_bootstrap.c \
     src/confdb/confdb_setup.c \
     src/util/nscd.c \
     $(NULL)
 sssd_LDADD = \
     $(SSSD_LIBS) \
     $(INOTIFY_LIBS) \
-    $(LIBNL_LIBS) \
     $(KEYUTILS_LIBS) \
-    $(SYSTEMD_DAEMON_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
     libsss_iface.la \
     libsss_sbus.la \
@@ -1549,7 +1560,6 @@ sssd_nss_LDADD = \
     $(SSSD_LIBS) \
     libsss_idmap.la \
     libsss_cert.la \
-    $(SYSTEMD_DAEMON_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
     libsss_iface.la \
     libsss_sbus.la \
@@ -1581,7 +1591,6 @@ sssd_pam_LDADD = \
     $(SSSD_LIBS) \
     $(SELINUX_LIBS) \
     $(PAM_LIBS) \
-    $(SYSTEMD_DAEMON_LIBS) \
     $(GSSAPI_KRB5_LIBS) \
     libsss_certmap.la \
     $(SSSD_INTERNAL_LTLIBS) \
@@ -1600,7 +1609,6 @@ sssd_sudo_SOURCES = \
 sssd_sudo_LDADD = \
     $(LIBADD_DL) \
     $(SSSD_LIBS) \
-    $(SYSTEMD_DAEMON_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
     libsss_iface.la \
     libsss_sbus.la \
@@ -1615,7 +1623,6 @@ sssd_autofs_SOURCES = \
 sssd_autofs_LDADD = \
     $(LIBADD_DL) \
     $(SSSD_LIBS) \
-    $(SYSTEMD_DAEMON_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
     libsss_iface.la \
     libsss_sbus.la \
@@ -1626,17 +1633,19 @@ if BUILD_SSH
 sssd_ssh_SOURCES = \
     src/responder/ssh/sshsrv.c \
     src/responder/ssh/ssh_cmd.c \
-    src/responder/ssh/ssh_known_hosts.c \
     src/responder/ssh/ssh_protocol.c \
     src/responder/ssh/ssh_reply.c \
     src/responder/ssh/ssh_cert_to_ssh_key.c \
     $(SSSD_RESPONDER_OBJ) \
     $(NULL)
+if BUILD_SSH_KNOWN_HOSTS_PROXY
+sssd_ssh_SOURCES += \
+    src/responder/ssh/ssh_known_hosts.c
+endif
 sssd_ssh_LDADD = \
     $(LIBADD_DL) \
     $(SSSD_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
-    $(SYSTEMD_DAEMON_LIBS) \
     libsss_cert.la \
     libsss_certmap.la \
     libsss_iface.la \
@@ -1658,7 +1667,6 @@ sssd_pac_LDADD = \
     $(NDR_KRB5PAC_LIBS) \
     $(TDB_LIBS) \
     $(SSSD_LIBS) \
-    $(SYSTEMD_DAEMON_LIBS) \
     libsss_idmap.la \
     $(SSSD_INTERNAL_LTLIBS) \
     libsss_iface.la \
@@ -1736,7 +1744,6 @@ sssd_ifp_CFLAGS = \
 sssd_ifp_LDADD = \
     $(LIBADD_DL) \
     $(SSSD_LIBS) \
-    $(SYSTEMD_DAEMON_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
     libsss_cert.la \
     libifp_iface.la \
@@ -1806,7 +1813,6 @@ sssd_kcm_LDADD = \
     $(KRB5_LIBS) \
     $(SSSD_LIBS) \
     $(UUID_LIBS) \
-    $(SYSTEMD_DAEMON_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
     libsss_iface.la \
     libsss_sbus.la \
@@ -1830,6 +1836,7 @@ sssd_be_SOURCES = \
     src/providers/data_provider_opts.c \
     src/providers/data_provider_callbacks.c \
     src/providers/be_dyndns.c \
+    src/providers/be_netlink.c \
     src/providers/be_ptask.c \
     src/providers/be_refresh.c \
     src/providers/data_provider/dp.c \
@@ -1856,6 +1863,7 @@ sssd_be_LDADD = \
     $(SSSD_LIBS) \
     $(CARES_LIBS) \
     $(PAM_LIBS) \
+    $(LIBNL_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
     libsss_iface.la \
     libsss_sbus.la \
@@ -1984,6 +1992,15 @@ sss_ssh_authorizedkeys_LDADD = \
     $(SSSD_INTERNAL_LTLIBS) \
     $(CLIENT_LIBS) $(TALLOC_LIBS) $(POPT_LIBS)
 
+sss_ssh_knownhosts_SOURCES = \
+    src/sss_client/common.c \
+    src/sss_client/ssh/sss_ssh_client.c \
+    src/sss_client/ssh/sss_ssh_knownhosts.c
+sss_ssh_knownhosts_CFLAGS = $(AM_CFLAGS)
+sss_ssh_knownhosts_LDADD = \
+    $(SSSD_INTERNAL_LTLIBS) \
+    $(CLIENT_LIBS) $(TALLOC_LIBS) $(POPT_LIBS)
+
 sss_ssh_knownhostsproxy_SOURCES = \
     src/sss_client/common.c \
     src/sss_client/ssh/sss_ssh_client.c \
@@ -2109,6 +2126,7 @@ libdlopen_test_providers_la_LIBADD = \
     $(PAM_LIBS) \
     $(SSSD_LIBS) \
     $(CARES_LIBS) \
+    $(LIBNL_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
     libsss_iface.la \
     libsss_sbus.la \
@@ -2314,15 +2332,20 @@ find_uid_tests_CFLAGS = \
     $(AM_CFLAGS) \
     $(TALLOC_CFLAGS) \
     $(DHASH_CFLAGS) \
-    $(CHECK_CFLAGS) \
-    $(SYSTEMD_LOGIN_CFLAGS)
+    $(CHECK_CFLAGS)
+if HAVE_SYSTEMD_UNIT
+    find_uid_tests_CFLAGS += $(SYSTEMD_LOGIN_CFLAGS)
+endif
+
 find_uid_tests_LDADD = \
     libsss_debug.la \
     $(TALLOC_LIBS) \
     $(DHASH_LIBS) \
     $(CHECK_LIBS) \
-    $(SYSTEMD_LOGIN_LIBS) \
     libsss_test_common.la
+if HAVE_SYSTEMD_UNIT
+    find_uid_tests_LDADD += $(SYSTEMD_LOGIN_LIBS)
+endif
 
 auth_tests_SOURCES = \
     src/tests/auth-tests.c
@@ -2356,7 +2379,10 @@ ipa_ldap_opt_tests_LDADD = \
     $(LDB_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
     $(OPENLDAP_LIBS) \
-    libsss_test_common.la
+    libsss_test_common.la \
+    libsss_ldap_common.la \
+    libdlopen_test_providers.la \
+    $(NULL)
 
 ad_ldap_opt_tests_SOURCES = \
     src/providers/ldap/ldap_opts.c \
@@ -2462,7 +2488,6 @@ responder_socket_access_tests_LDADD = \
     $(CHECK_LIBS) \
     $(SSSD_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
-    $(SYSTEMD_DAEMON_LIBS) \
     libsss_test_common.la \
     libsss_iface.la \
     libsss_sbus.la \
@@ -2610,7 +2635,6 @@ nss_srv_tests_LDADD = \
     $(CMOCKA_LIBS) \
     $(SSSD_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
-    $(SYSTEMD_DAEMON_LIBS) \
     libsss_test_common.la \
     libsss_cert.la \
     libsss_idmap.la \
@@ -2658,7 +2682,6 @@ pam_srv_tests_LDADD = \
     $(PAM_LIBS) \
     $(SSSD_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
-    $(SYSTEMD_DAEMON_LIBS) \
     $(GSSAPI_KRB5_LIBS) \
     libsss_test_common.la \
     libsss_idmap.la \
@@ -2678,11 +2701,14 @@ ssh_srv_tests_SOURCES = \
     $(TEST_MOCK_RESP_OBJ) \
     src/tests/cmocka/test_ssh_srv.c \
     src/responder/ssh/ssh_cmd.c \
-    src/responder/ssh/ssh_known_hosts.c \
     src/responder/ssh/ssh_protocol.c \
     src/responder/ssh/ssh_reply.c \
     src/responder/ssh/ssh_cert_to_ssh_key.c \
     $(NULL)
+if BUILD_SSH_KNOWN_HOSTS_PROXY
+ssh_srv_tests_SOURCES += \
+    src/responder/ssh/ssh_known_hosts.c
+endif
 ssh_srv_tests_CFLAGS = \
     -U SSSD_LIBEXEC_PATH -DSSSD_LIBEXEC_PATH=\"$(abs_builddir)\" \
     -I$(abs_builddir)/src \
@@ -2701,7 +2727,6 @@ ssh_srv_tests_LDADD = \
     $(CMOCKA_LIBS) \
     $(SSSD_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
-    $(SYSTEMD_DAEMON_LIBS) \
     libsss_test_common.la \
     libsss_iface.la \
     libsss_sbus.la \
@@ -2725,7 +2750,6 @@ responder_get_domains_tests_LDADD = \
     $(CMOCKA_LIBS) \
     $(SSSD_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
-    $(SYSTEMD_DAEMON_LIBS) \
     libsss_test_common.la \
     libsss_iface.la \
     libsss_sbus.la \
@@ -2754,14 +2778,19 @@ test_find_uid_SOURCES = \
 test_find_uid_CFLAGS = \
     $(AM_CFLAGS) \
     $(TALLOC_CFLAGS) \
-    $(DHASH_CFLAGS) \
-    $(SYSTEMD_LOGIN_CFLAGS)
+    $(DHASH_CFLAGS)
+if HAVE_SYSTEMD_UNIT
+    test_find_uid_CFLAGS += $(SYSTEMD_LOGIN_CFLAGS)
+endif
+
 test_find_uid_LDADD = \
     $(TALLOC_LIBS) \
     $(DHASH_LIBS) \
     $(CMOCKA_LIBS) \
-    $(SYSTEMD_LOGIN_LIBS) \
     libsss_debug.la
+if HAVE_SYSTEMD_UNIT
+    test_find_uid_CFLAGS += $(SYSTEMD_LOGIN_LIBS)
+endif
 
 test_io_SOURCES = \
     src/tests/cmocka/test_io.c \
@@ -2787,7 +2816,6 @@ test_negcache_LDADD = \
     $(LIBADD_DL) \
     $(CMOCKA_LIBS) \
     $(SSSD_LIBS) \
-    $(SYSTEMD_DAEMON_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
     libsss_test_common.la \
     libsss_idmap.la \
@@ -2918,6 +2946,8 @@ nestedgroups_tests_LDADD = \
     $(SSSD_INTERNAL_LTLIBS) \
     libsss_idmap.la \
     libsss_test_common.la \
+    libsss_ldap_common.la \
+    libdlopen_test_providers.la \
     $(NULL)
 if BUILD_SYSTEMTAP
 nestedgroups_tests_LDADD += stap_generated_probes.lo
@@ -3092,16 +3122,19 @@ ad_common_tests_SOURCES = \
     src/providers/ad/ad_pac.c \
     src/providers/ad/ad_pac_common.c \
     src/providers/ad/ad_domain_info.c \
+    src/providers/ldap/ldap_common.c \
     src/providers/ldap/sdap_async_initgroups_ad.c \
     $(NULL)
 ad_common_tests_CFLAGS = \
     $(AM_CFLAGS) \
+    $(OPENLDAP_LIBS) \
     $(NDR_NBT_CFLAGS) \
     $(NDR_KRB5PAC_CFLAGS) \
     $(CMOCKA_CFLAGS) \
     $(NULL)
 ad_common_tests_LDFLAGS = \
     -Wl,-wrap,sdap_set_sasl_options \
+    -Wl,-wrap,sdap_select_principal_from_keytab_sync \
     -Wl,-wrap,krb5_kt_default \
     $(NULL)
 ad_common_tests_LDADD = \
@@ -3164,6 +3197,8 @@ sdap_tests_LDADD = \
     $(SSSD_INTERNAL_LTLIBS) \
     $(OPENLDAP_LIBS) \
     libsss_test_common.la \
+    libsss_ldap_common.la \
+    libdlopen_test_providers.la \
     $(NULL)
 
 if BUILD_IFP
@@ -3180,7 +3215,6 @@ ifp_tests_LDADD = \
     $(CMOCKA_LIBS) \
     $(SSSD_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
-    $(SYSTEMD_DAEMON_LIBS) \
     libsss_test_common.la \
     libsss_iface.la \
     libsss_sbus.la \
@@ -3423,7 +3457,6 @@ responder_cache_req_tests_LDADD = \
     $(CMOCKA_LIBS) \
     $(SSSD_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
-    $(SYSTEMD_DAEMON_LIBS) \
     libsss_test_common.la \
     libsss_iface.la \
     libsss_sbus.la \
@@ -3542,6 +3575,7 @@ test_ipa_subdom_server_SOURCES = \
     src/providers/ipa/ipa_subdomains_server.c \
     src/providers/ipa/ipa_subdomains_utils.c \
     src/providers/ipa/ipa_opts.c \
+    src/providers/ldap/ldap_common.c \
     $(NULL)
 test_ipa_subdom_server_CFLAGS = \
     $(AM_CFLAGS) \
@@ -3554,13 +3588,16 @@ test_ipa_subdom_server_LDFLAGS = \
     -Wl,-wrap,execve \
     -Wl,-wrap,rename \
     -Wl,-wrap,sss_unique_filename \
+    -Wl,-wrap,sdap_select_principal_from_keytab_sync \
     $(NULL)
 test_ipa_subdom_server_LDADD = \
     $(CMOCKA_LIBS) \
     $(SSSD_LIBS) \
     $(KEYUTILS_LIBS) \
     $(KRB5_LIBS) \
+    $(OPENLDAP_LIBS) \
     $(SSSD_INTERNAL_LTLIBS) \
+    libsss_idmap.la \
     libsss_ldap_common.la \
     libsss_ad_tests.la \
     libsss_test_common.la \
@@ -3726,6 +3763,7 @@ test_iobuf_CFLAGS = \
 test_iobuf_LDADD = \
     $(CMOCKA_LIBS) \
     $(SSSD_LIBS) \
+    $(SSSD_INTERNAL_LTLIBS) \
     $(NULL)
 
 test_confdb_SOURCES = \
@@ -4050,8 +4088,9 @@ intgcheck-prepare:
 	$(abs_top_srcdir)/configure \
 	    --prefix="$$prefix" \
 	    --with-ldb-lib-dir="$$prefix"/lib/ldb \
+	    --with-pid-path="$$prefix"/run/sssd \
 	    --enable-intgcheck-reqs \
-	    --without-semanage \
+	    --without-selinux \
 	    --with-files-provider \
 	    --with-session-recording-shell=/bin/false \
 	    $(INTGCHECK_CONFIGURE_FLAGS) \
@@ -4670,6 +4709,7 @@ krb5_child_SOURCES = \
     src/util/authtok.c \
     src/util/authtok-utils.c \
     src/util/util.c \
+    src/util/capabilities.c \
     src/util/util_ext.c \
     src/util/signal.c \
     src/util/sss_chain_id.c \
@@ -4687,7 +4727,6 @@ krb5_child_CFLAGS = \
     $(AM_CFLAGS) \
     $(POPT_CFLAGS) \
     $(KRB5_CFLAGS) \
-    $(SYSTEMD_LOGIN_CFLAGS) \
     $(NULL)
 krb5_child_LDADD = \
     libsss_debug.la \
@@ -4696,9 +4735,13 @@ krb5_child_LDADD = \
     $(DHASH_LIBS) \
     $(KRB5_LIBS) \
     $(CLIENT_LIBS) \
-    $(SYSTEMD_LOGIN_LIBS) \
     $(JANSSON_LIBS) \
+    $(CAP_LIBS) \
     $(NULL)
+
+if HAVE_SYSTEMD_UNIT
+    krb5_child_LDADD += $(SYSTEMD_DAEMON_LIBS)
+endif
 
 ldap_child_SOURCES = \
     src/providers/ldap/ldap_child.c \
@@ -4711,6 +4754,7 @@ ldap_child_SOURCES = \
     src/util/authtok-utils.c \
     src/util/util.c \
     src/util/util_ext.c \
+    src/util/capabilities.c \
     src/util/signal.c \
     src/util/become_user.c \
     src/util/util_errors.c \
@@ -4723,6 +4767,7 @@ ldap_child_LDADD = \
     libsss_debug.la \
     $(TALLOC_LIBS) \
     $(POPT_LIBS) \
+    $(CAP_LIBS) \
     $(DHASH_LIBS) \
     $(KRB5_LIBS)
 
@@ -5255,14 +5300,17 @@ edit_cmd = $(SED) \
         -e 's|@environment_file[@]|$(environment_file)|g' \
         -e 's|@localstatedir[@]|$(localstatedir)|g' \
         -e 's|@runstatedir[@]|$(runstatedir)|g' \
-        -e 's|@pidpath[@]|$(pidpath)|g' \
         -e 's|@logpath[@]|$(logpath)|g' \
         -e 's|@libexecdir[@]|$(libexecdir)|g' \
         -e 's|@pipepath[@]|$(pipepath)|g' \
         -e 's|@prefix[@]|$(prefix)|g' \
         -e 's|@SSSD_USER[@]|$(SSSD_USER)|g' \
         -e 's|@condconfigexists[@]|$(condconfigexists)|g' \
-        -e 's|@additional_caps[@]|$(additional_caps)|g'
+        -e 's|@capabilities[@]|$(capabilities)|g' \
+        -e 's|@nss_service_user_group[@]|$(nss_service_user_group)|g' \
+        -e 's|@nss_socket_user_group[@]|$(nss_socket_user_group)|g' \
+        -e 's|@supplementary_groups[@]|$(supplementary_groups)|g' \
+        -e 's|@sssdconfdir[@]|$(sssdconfdir)|g'
 
 replace_script = \
     @rm -f $@ $@.tmp; \
@@ -5375,10 +5423,12 @@ src/tools/wrappers/sss_debuglevel: src/tools/wrappers/sss_debuglevel.in Makefile
 	$(replace_script)
 
 SSSD_USER_DIRS = \
+    $(DESTDIR)$(sss_statedir) \
     $(DESTDIR)$(dbpath) \
     $(DESTDIR)$(keytabdir) \
     $(DESTDIR)$(mcpath) \
     $(DESTDIR)$(pipepath) \
+    $(DESTDIR)$(pipepath)/private \
     $(DESTDIR)$(pubconfpath) \
     $(DESTDIR)$(pubconfpath)/krb5.include.d \
     $(DESTDIR)$(gpocachepath) \
@@ -5388,6 +5438,7 @@ SSSD_USER_DIRS = \
     $(DESTDIR)$(sssddefaultconfdir) \
     $(DESTDIR)$(logpath) \
     $(DESTDIR)$(deskprofilepath) \
+    $(DESTDIR)$(runstatedir)/sssd \
     $(NULL)
 
 installsssddirs::
@@ -5413,16 +5464,23 @@ installsssddirs::
     $(NULL);
 if SSSD_USER
 	-chown $(SSSD_USER):$(SSSD_USER) $(SSSD_USER_DIRS)
-	-chown $(SSSD_USER) $(DESTDIR)$(pipepath)/private
+	-chown -f $(SSSD_USER):$(SSSD_USER) $(DESTDIR)$(dbpath)/* || true
+	-chown -f $(SSSD_USER):$(SSSD_USER) $(DESTDIR)$(sssdconfdir)/sssd.conf || true
+	-chown -f -R $(SSSD_USER):$(SSSD_USER) $(DESTDIR)$(sssdconfdir)/conf.d || true
+	-chown -f $(SSSD_USER):$(SSSD_USER) $(DESTDIR)$(logpath)/*.log || true
 endif
-	$(INSTALL) -d -m 0700 $(DESTDIR)$(dbpath) $(DESTDIR)$(logpath) \
-	    $(DESTDIR)$(keytabdir) \
+	$(INSTALL) -d -m 0770 $(DESTDIR)$(dbpath) $(DESTDIR)$(logpath) \
+	    $(DESTDIR)$(keytabdir) $(DESTDIR)$(gpocachepath) \
 	    $(NULL)
-	$(INSTALL) -d -m 0750 $(DESTDIR)$(pipepath)/private
-	$(INSTALL) -d -m 0755 $(DESTDIR)$(mcpath) $(DESTDIR)$(pipepath) \
+	$(INSTALL) -d -m 0770 $(DESTDIR)$(pipepath)/private
+	$(INSTALL) -d -m 0771 $(DESTDIR)$(deskprofilepath)
+	$(INSTALL) -d -m 0775 $(DESTDIR)$(sss_statedir) \
+            $(DESTDIR)$(mcpath) $(DESTDIR)$(pipepath) \
             $(DESTDIR)$(pubconfpath) \
-            $(DESTDIR)$(pubconfpath)/krb5.include.d $(DESTDIR)$(gpocachepath)
-	$(INSTALL) -d -m 0711 $(DESTDIR)$(sssdconfdir) \
+            $(DESTDIR)$(pubconfpath)/krb5.include.d \
+            $(DESTDIR)$(runstatedir)/sssd \
+	    $(NULL)
+	$(INSTALL) -d -m 0750 $(DESTDIR)$(sssdconfdir) \
                           $(DESTDIR)$(sssdconfdir)/conf.d \
                           $(DESTDIR)$(sssdconfdir)/pki
 
@@ -5521,18 +5579,21 @@ else
 	$(MKDIR_P) $(DESTDIR)$(initdir)
 endif
 
+CHILD_CAPABILITIES="cap_chown,cap_dac_override,cap_setuid,cap_setgid=ep"
 if SSSD_USER
 	-chgrp $(SSSD_USER) $(DESTDIR)$(sssdlibexecdir)/ldap_child
-	chmod 4750 $(DESTDIR)$(sssdlibexecdir)/ldap_child
+	chmod 750 $(DESTDIR)$(sssdlibexecdir)/ldap_child
+	-$(SETCAP) $(CHILD_CAPABILITIES) $(DESTDIR)$(sssdlibexecdir)/ldap_child
 	-chgrp $(SSSD_USER) $(DESTDIR)$(sssdlibexecdir)/krb5_child
-	chmod 4750 $(DESTDIR)$(sssdlibexecdir)/krb5_child
-	-chgrp $(SSSD_USER) $(DESTDIR)$(sssdlibexecdir)/proxy_child
-	chmod 4750 $(DESTDIR)$(sssdlibexecdir)/proxy_child
+	chmod 750 $(DESTDIR)$(sssdlibexecdir)/krb5_child
+	-$(SETCAP) $(CHILD_CAPABILITIES) $(DESTDIR)$(sssdlibexecdir)/krb5_child
 if BUILD_SELINUX
 	-chgrp $(SSSD_USER) $(DESTDIR)$(sssdlibexecdir)/selinux_child
-	chmod 4750 $(DESTDIR)$(sssdlibexecdir)/selinux_child
+	chmod 750 $(DESTDIR)$(sssdlibexecdir)/selinux_child
+	-$(SETCAP) $(CHILD_CAPABILITIES) $(DESTDIR)$(sssdlibexecdir)/selinux_child
 endif
 endif
+
 
 install-data-hook:
 	rm $(DESTDIR)/$(nsslibdir)/libnss_sss.so.2 \
@@ -5547,6 +5608,11 @@ endif
 if BUILD_KCM
 	$(MKDIR_P) $(DESTDIR)/$(sssdkcmdatadir)
 	$(MKDIR_P) $(DESTDIR)$(secdbpath)
+if SSSD_USER
+	-chown $(SSSD_USER):$(SSSD_USER) $(DESTDIR)$(secdbpath)
+	-chown -f $(SSSD_USER):$(SSSD_USER) $(DESTDIR)$(secdbpath)/*.ldb || true
+endif
+	$(INSTALL) -d -m 0770 $(DESTDIR)$(secdbpath)
 endif
 
 uninstall-hook:
@@ -5635,6 +5701,7 @@ endif
 	rm -f $(builddir)/src/sysv/systemd/sssd-kcm.socket
 	rm -f $(builddir)/src/sysv/systemd/sssd-kcm.service
 	rm -f $(builddir)/src/tools/wrappers/sss_debuglevel
+	rm -Rf $(builddir)/contrib
 
 CLEANFILES += *.X */*.X */*/*.X
 
@@ -5663,19 +5730,11 @@ dist_noinst_DATA += \
     m4 \
     contrib/sssd.spec.in \
     contrib/sssd.sysusers \
+    contrib/90-sssd-token-access.rules \
+    contrib/sssd-tmpfiles.conf \
     BUILD.txt \
     COPYING \
-    src/tests/multihost/README.md \
-    src/tests/multihost/conftest.py \
-    src/tests/multihost/basic/mhc.yaml \
-    src/tests/multihost/basic/test_basic.py \
-    src/tests/multihost/basic/test_config.py \
-    src/tests/multihost/basic/test_files.py \
-    src/tests/multihost/basic/test_ifp.py \
-    src/tests/multihost/basic/test_kcm.py \
-    src/tests/multihost/basic/test_sssctl_config_check.py \
-    src/tests/multihost/basic/test_sudo.py \
-    src/tests/multihost/basic/utils_config.py \
+    src/tests/ \
     $(NULL)
 
 rpmroot:
@@ -5702,6 +5761,7 @@ if GIT_CHECKOUT
 endif
 	cp $(builddir)/contrib/sssd.spec $(RPMBUILD)/SPECS
 	cp $(distdir).tar.gz $(RPMBUILD)/SOURCES
+	cp $(srcdir)/contrib/sssd.sysusers $(RPMBUILD)/SOURCES
 
 rpms: rpmbrprep
 	cd $(RPMBUILD); \

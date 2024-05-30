@@ -130,10 +130,15 @@ class TestMisc(object):
         domain_name = tools.get_domain_section_name()
         client = sssdTools(multihost.client[0])
         domain_params = {'cache_credentials': 'true',
-                         'entry_cache_timeout': '5400',
                          'refresh_expired_interval': '4000'}
         client.sssd_conf(f'domain/{domain_name}', domain_params)
-        client.sssd_conf("sssd", {'enable_files_domain': 'true'}, action='update')
+        s_param = {'domains': f'{domain_name}, local'}
+        tools.sssd_conf('sssd',s_param, action='update')
+        param = {'id_provider': 'proxy',
+                 'proxy_lib_name': 'files',
+                 'passwd_files': '/etc/passwd',
+                 'proxy_pam_target': 'sssd-shadowutils'}
+        tools.sssd_conf('domain/local', param)
         multihost.client[0].service_sssd('restart')
         user = f'foo1@{domain_name}'
         check_login_client(multihost, user, "Secret123")
@@ -433,16 +438,11 @@ class TestMisc(object):
         # Try ssh after socket activation is configured
         # Result does not matter we just need to trigger the PAM stack
         with pytest.raises(Exception):
-            check_login_client(multihost, user, 'Secret123')
-
-        # Print pam log for debug purposes
-        multihost.client[0].run_command(
-            'cat /var/log/sssd/sssd_pam.log', raiseonerr=False)
+            check_login_client(multihost, user, 'Secret1234')
 
         # Download sssd pam log
         log_str = multihost.client[0].get_file_contents(
-            "/var/log/sssd/sssd_pam.log"). \
-            decode('utf-8')
+            f"/var/log/sssd/sssd_{domain_name}.log").decode('utf-8')
 
         # Disable socket activation
         multihost.client[0].run_command(

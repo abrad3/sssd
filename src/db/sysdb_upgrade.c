@@ -2718,6 +2718,108 @@ done:
     return ret;
 }
 
+int sysdb_upgrade_23(struct sysdb_ctx *sysdb, const char **ver)
+{
+    TALLOC_CTX *tmp_ctx;
+    int ret;
+    struct ldb_message *msg;
+    struct upgrade_ctx *ctx;
+
+    tmp_ctx = talloc_new(NULL);
+    if (!tmp_ctx) {
+        return ENOMEM;
+    }
+
+    ret = commence_upgrade(sysdb, sysdb->ldb, SYSDB_VERSION_0_24, &ctx);
+    if (ret) {
+        return ret;
+    }
+
+    msg = ldb_msg_new(tmp_ctx);
+    if (!msg) {
+        ret = ENOMEM;
+        goto done;
+    }
+    msg->dn = ldb_dn_new(tmp_ctx, sysdb->ldb, "@ATTRIBUTES");
+    if (!msg->dn) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    /* Case insensitive search for mail */
+    ret = ldb_msg_add_empty(msg, SYSDB_USER_EMAIL, LDB_FLAG_MOD_ADD, NULL);
+    if (ret != LDB_SUCCESS) {
+        ret = ENOMEM;
+        goto done;
+    }
+    ret = ldb_msg_add_string(msg, SYSDB_USER_EMAIL, "CASE_INSENSITIVE");
+    if (ret != LDB_SUCCESS) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    /* Case insensitive search for gpoGUID */
+    ret = ldb_msg_add_empty(msg, SYSDB_GPO_GUID_ATTR, LDB_FLAG_MOD_ADD, NULL);
+    if (ret != LDB_SUCCESS) {
+        ret = ENOMEM;
+        goto done;
+    }
+    ret = ldb_msg_add_string(msg, SYSDB_GPO_GUID_ATTR, "CASE_INSENSITIVE");
+    if (ret != LDB_SUCCESS) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    ret = ldb_modify(sysdb->ldb, msg);
+    if (ret != LDB_SUCCESS) {
+        ret = sysdb_error_to_errno(ret);
+        goto done;
+    }
+
+    talloc_free(msg);
+
+    /* Add new indices */
+    msg = ldb_msg_new(ctx);
+    if (msg == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    msg->dn = ldb_dn_new(msg, sysdb->ldb, "@INDEXLIST");
+    if (msg->dn == NULL) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    ret = ldb_msg_add_empty(msg, "@IDXATTR", LDB_FLAG_MOD_ADD, NULL);
+    if (ret != LDB_SUCCESS) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    ret = ldb_msg_add_string(msg, "@IDXATTR", SYSDB_GPO_GUID_ATTR);
+    if (ret != LDB_SUCCESS) {
+        ret = ENOMEM;
+        goto done;
+    }
+
+    ret = ldb_modify(sysdb->ldb, msg);
+    if (ret != LDB_SUCCESS) {
+        ret = sysdb_error_to_errno(ret);
+        goto done;
+    }
+
+    talloc_free(msg);
+
+    /* conversion done, update version number */
+    ret = update_version(ctx);
+
+done:
+    ret = finish_upgrade(ret, &ctx, ver);
+    talloc_free(tmp_ctx);
+    return ret;
+}
+
 int sysdb_ts_upgrade_01(struct sysdb_ctx *sysdb, const char **ver)
 {
     struct upgrade_ctx *ctx;

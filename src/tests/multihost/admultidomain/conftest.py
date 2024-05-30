@@ -10,6 +10,9 @@ from sssd.testlib.common.utils import sssdTools
 
 pytest_plugins = (
     'sssd.testlib.common.fixtures',
+    'pytest_importance',
+    'pytest_ticket',
+    'sssd.testlib.common.custom_log',
 )
 
 

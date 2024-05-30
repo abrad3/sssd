@@ -27,21 +27,15 @@ declare -a CONFIGURE_ARG_LIST=(
     "--disable-rpath"
     "--disable-static"
     "--enable-ldb-version-check"
-    "--with-syslog=journald"
+    "--with-initscript=sysv"
+    "--with-syslog=syslog"
     "--enable-systemtap"
 )
 
 
-if [[ "$DISTRO_BRANCH" == -redhat-centos-8*- ||
-      "$DISTRO_BRANCH" == -redhat-redhatenterprise*-8.*- ]]; then
-    CONFIGURE_ARG_LIST+=(
-        "--with-python2-bindings"
-    )
-else
-    CONFIGURE_ARG_LIST+=(
-        "--without-python2-bindings"
-    )
-fi
+CONFIGURE_ARG_LIST+=(
+    "--without-python2-bindings"
+)
 
 
 # Different versions of Debian might need different versions here but this is
@@ -49,6 +43,14 @@ fi
 if [[ "$DISTRO_BRANCH" == -debian-* ]]; then
     CONFIGURE_ARG_LIST+=(
         "--with-smb-idmap-interface-version=5"
+    )
+fi
+
+if [[ "$DISTRO_BRANCH" == -redhat-centos-9*- ||
+      "$DISTRO_BRANCH" == -redhat-redhatenterprise*-9.*- ]]; then
+    CONFIGURE_ARG_LIST+=(
+        "--with-libsifp"
+        "--with-conf-service-user-support"
     )
 fi
 

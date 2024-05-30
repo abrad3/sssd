@@ -122,12 +122,14 @@ class QeHost(QeBaseHost):
             : return str: Return code of the yum remove command
         """
         if 'Fedora' in self.distro or '8.' in self.distro or\
-                '9.' in self.distro:
+                '9.' in self.distro or '10.' in self.distro:
             pkg_cmd = 'dnf'
         else:
             pkg_cmd = 'yum'
         pkg_install_cmd = f'{pkg_cmd} -y {action} {package}'
         cmd = self.run_command(pkg_install_cmd, raiseonerr=False)
+        if cmd.returncode != 0:
+            print(f"{pkg_install_cmd} failed.\nOUT:{cmd.stdout_text}\nERR:{cmd.stderr_text}")
         return bool(cmd.returncode == 0)
 
     def service_sssd(self, action):
@@ -145,6 +147,7 @@ class QeHost(QeBaseHost):
         if cmd.returncode == 0:
             time.sleep(10)
             return cmd.returncode
+        self.run_command('journalctl -xeu sssd.service', raiseonerr=False)
         raise SSSDException(f'Unable to {action} sssd', 1)
 
     def yum_install(self, package):
@@ -190,6 +193,17 @@ class QeHost(QeBaseHost):
         cmd = self.run_command(['dnf', '-y', 'remove', package],
                                raiseonerr=False)
         return cmd.returncode
+
+    def detect_files_provider(self):
+        """
+        Detect the SSSD's files provider feature
+        :param: None
+        :return bool: Returns "True" if "files provider" is supported
+        :Exception: None
+        """
+        check = f'ls "/usr/lib64/sssd/libsss_files.so"'
+        cmd = self.run_command(check, raiseonerr=False)
+        return cmd.returncode == 0
 
 
 class QeWinHost(QeBaseHost, pytest_multihost.host.WinHost):

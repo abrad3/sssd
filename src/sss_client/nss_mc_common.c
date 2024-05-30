@@ -79,17 +79,23 @@ static errno_t sss_nss_mc_validate(struct sss_cli_mc_ctx *ctx)
     }
 
     if (fstat(ctx->fd, &fdstat) == -1) {
-        return errno;
+        return EINVAL;
     }
 
     /* Memcache was removed. */
     if (fdstat.st_nlink == 0) {
-        return ENOENT;
+        return EINVAL;
+    }
+
+    /* FD was hijacked */
+    if ((fdstat.st_dev != ctx->fd_device) || (fdstat.st_ino != ctx->fd_inode)) {
+        ctx->fd = -1; /* don't ruin app even if it's misbehaving */
+        return EINVAL;
     }
 
     /* Invalid size. */
     if (fdstat.st_size != ctx->mmap_size) {
-        return ERANGE;
+        return EINVAL;
     }
 
     return EOK;
@@ -161,6 +167,8 @@ static void sss_nss_mc_destroy_ctx(struct sss_cli_mc_ctx *ctx)
         close(ctx->fd);
     }
     ctx->fd = -1;
+    ctx->fd_inode = 0;
+    ctx->fd_device = 0;
 
     ctx->seed = 0;
     ctx->data_table = NULL;
@@ -202,6 +210,8 @@ static errno_t sss_nss_mc_init_ctx(const char *name,
         ret = EIO;
         goto done;
     }
+    ctx->fd_inode = fdstat.st_ino;
+    ctx->fd_device = fdstat.st_dev;
 
     if (fdstat.st_size < MC_HEADER_SIZE) {
         ret = ENOMEM;

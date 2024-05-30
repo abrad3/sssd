@@ -2613,6 +2613,22 @@ int sysdb_store_user(struct sss_domain_info *domain,
         }
     } else {
         /* the user exists, let's just replace attributes when set */
+        /*
+         * The sysdb_search_user_by_name() function also matches lowercased
+         * aliases, saved when the domain is case-insensitive. This means that
+         * the stored entry name can differ in capitalization from the search
+         * name. Use the cached entry name to perform the modification because
+         * if name capitalization in entry's DN differs the modify operation
+         * will fail.
+         */
+        const char *entry_name =
+            ldb_msg_find_attr_as_string(msg, SYSDB_NAME, NULL);
+        if (entry_name != NULL) {
+            name = entry_name;
+        } else {
+            DEBUG(SSSDBG_MINOR_FAILURE, "User '%s' without a name?\n", name);
+        }
+
         ret = sysdb_store_user_attrs(domain, name, uid, gid, gecos, homedir,
                                      shell, orig_dn, attrs, remove_attrs,
                                      cache_timeout, now);
@@ -2847,6 +2863,22 @@ int sysdb_store_group(struct sss_domain_info *domain,
         ret = sysdb_store_new_group(domain, name, gid, attrs,
                                     cache_timeout, now);
     } else {
+        /*
+         * The sysdb_search_group_by_name() function also matches lowercased
+         * aliases, saved when the domain is case-insensitive. This means that
+         * the stored entry name can differ in capitalization from the search
+         * name. Use the cached entry name to perform the modification because
+         * if name capitalization in entry's DN differs the modify operation
+         * will fail.
+         */
+        const char *entry_name =
+            ldb_msg_find_attr_as_string(msg, SYSDB_NAME, NULL);
+        if (entry_name != NULL) {
+            name = entry_name;
+        } else {
+            DEBUG(SSSDBG_MINOR_FAILURE, "Group '%s' without a name?\n", name);
+        }
+
         ret = sysdb_store_group_attrs(domain, name, gid, attrs,
                                       cache_timeout, now);
     }
@@ -2980,6 +3012,7 @@ sysdb_group_membership_mod(struct sss_domain_info *domain,
     struct ldb_dn *member_dn;
     char *member_domname;
     struct sss_domain_info *member_dom;
+    struct sss_domain_info *group_dom;
     int ret;
     TALLOC_CTX *tmp_ctx = talloc_new(NULL);
     if (!tmp_ctx) {
@@ -3019,7 +3052,17 @@ sysdb_group_membership_mod(struct sss_domain_info *domain,
     }
 
     if (!is_dn) {
-        group_dn = sysdb_group_dn(tmp_ctx, domain, group);
+        /* To create a correct DN we have to check if the group belongs to */
+        /* child domain */
+        group_dom = find_domain_by_object_name(domain, group);
+        if (group_dom == NULL) {
+            DEBUG(SSSDBG_OP_FAILURE,
+                  "The right (sub)domain for the group [%s] was not found\n",
+                  group);
+            ret = EINVAL;
+            goto done;
+        }
+        group_dn = sysdb_group_dn(tmp_ctx, group_dom, group);
     } else {
         group_dn = ldb_dn_new(tmp_ctx, domain->sysdb->ldb, group);
     }
@@ -5730,7 +5773,7 @@ errno_t sysdb_ldb_list_indexes(TALLOC_CTX *mem_ctx,
             indexes = talloc_realloc(mem_ctx, indexes, const char *, j + 2);
             if (indexes == NULL) ERROR_OUT(ret, ENOMEM, done);
 
-            indexes[j] = talloc_asprintf(indexes, "%*s", length, data);
+            indexes[j] = talloc_asprintf(indexes, "%.*s", length, data);
             if (indexes[j] == NULL) ERROR_OUT(ret, ENOMEM, done);
 
             indexes[++j] = NULL;

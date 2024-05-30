@@ -26,21 +26,7 @@
 #include <talloc.h>
 
 #include "util/util_errors.h"
-
-#define CONFDB_BASE_LDIF \
-     "dn: @ATTRIBUTES\n" \
-     "cn: CASE_INSENSITIVE\n" \
-     "dc: CASE_INSENSITIVE\n" \
-     "dn: CASE_INSENSITIVE\n" \
-     "name: CASE_INSENSITIVE\n" \
-     "objectclass: CASE_INSENSITIVE\n" \
-     "\n" \
-     "dn: @INDEXLIST\n" \
-     "@IDXATTR: cn\n" \
-     "\n" \
-     "dn: @MODULES\n" \
-     "@LIST: server_sort\n" \
-     "\n"
+#include "util/sss_ini.h"
 
 struct confdb_ctx;
 
@@ -51,5 +37,18 @@ errno_t confdb_setup(TALLOC_CTX *mem_ctx,
                      const char *only_section,
                      bool allow_missing_file,
                      struct confdb_ctx **_cdb);
+
+errno_t confdb_read_ini(TALLOC_CTX *mem_ctx,
+                     const char *config_file,
+                     const char *config_dir,
+                     bool allow_missing_config,
+                     struct sss_ini **_ini);
+
+errno_t confdb_write_ini(TALLOC_CTX *mem_ctx,
+                         const struct sss_ini *ini,
+                         const char *cdb_file,
+                         const char *only_section,
+                         bool allow_missing_content,
+                         struct confdb_ctx **_cdb);
 
 #endif /* CONFDB_SETUP_H_ */

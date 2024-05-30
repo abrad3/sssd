@@ -53,7 +53,7 @@ jobs:
         version: 9.${{ env.COPR_PROJECT }}
 
     - name: Upload source rpm as an artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: ${{ steps.srpm.outputs.file }}
         path: ${{ steps.srpm.outputs.path }}
@@ -69,8 +69,8 @@ jobs:
       uses: next-actions/copr/filter-chroots@master
       with:
         coprcfg: ${{ steps.copr.outputs.coprcfg }}
-        filter: "fedora-.+-x86_64|centos-stream-9-x86_64"
-        exclude: "fedora-eln-.+"
+        filter: "fedora-.+-x86_64|centos-stream-.*-x86_64"
+        exclude: "fedora-eln-.+|centos-stream-8-x86_64"
 
     - name: Create copr project
       uses: next-actions/copr/create-project@master
@@ -111,7 +111,7 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Downlooad source rpm
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: ${{ needs.prepare.outputs.srpm }}
         path: .

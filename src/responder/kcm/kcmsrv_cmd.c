@@ -350,7 +350,7 @@ static void kcm_send_reply(struct kcm_req_ctx *req_ctx)
 
     cctx = req_ctx->cctx;
 
-    ret = kcm_output_construct(cctx, &req_ctx->op_io, &req_ctx->repbuf);
+    ret = kcm_output_construct(req_ctx, &req_ctx->op_io, &req_ctx->repbuf);
     if (ret != EOK) {
         DEBUG(SSSDBG_CRIT_FAILURE,
               "Cannot construct the reply buffer, terminating client\n");
@@ -443,6 +443,7 @@ static errno_t kcm_recv_data(TALLOC_CTX *mem_ctx,
               "Failed to allocate memory for the message\n");
         return ENOMEM;
     }
+    talloc_set_destructor((void *) msg, sss_erase_talloc_mem_securely);
 
     /* Set the buffer and its expected len to receive the data */
     reqbuf->v_msg.kiov_base = msg;

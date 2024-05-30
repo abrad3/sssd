@@ -46,6 +46,11 @@
 
 #define LDAP_ENUM_PURGE_TIMEOUT 10800
 
+enum ldap_child_command {
+    LDAP_CHILD_GET_TGT = 0,
+    LDAP_CHILD_SELECT_PRINCIPAL = 1
+};
+
 struct sdap_id_ctx;
 
 struct sdap_id_conn_ctx {
@@ -295,8 +300,23 @@ struct tevent_req *groups_get_send(TALLOC_CTX *memctx,
                                    const char *name,
                                    int filter_type,
                                    bool noexist_delete,
-                                   bool no_members);
+                                   bool no_members,
+                                   bool set_non_posix);
 int groups_get_recv(struct tevent_req *req, int *dp_error_out, int *sdap_ret);
+
+struct tevent_req *groups_by_user_send(TALLOC_CTX *memctx,
+                                       struct tevent_context *ev,
+                                       struct sdap_id_ctx *ctx,
+                                       struct sdap_domain *sdom,
+                                       struct sdap_id_conn_ctx *conn,
+                                       struct sdap_search_base **search_bases,
+                                       const char *filter_value,
+                                       int filter_type,
+                                       const char *extra_value,
+                                       bool noexist_delete,
+                                       bool set_non_posix);
+
+int groups_by_user_recv(struct tevent_req *req, int *dp_error_out, int *sdap_ret);
 
 struct tevent_req *ldap_netgroup_get_send(TALLOC_CTX *memctx,
                                           struct tevent_context *ev,

@@ -31,6 +31,7 @@ def test_schema__ldap_extra_attrs_filled(client: Client, provider: GenericProvid
         1. SSSD starts successfully
         2. "tuser" is present in the passwd db
     :customerscenario: False
+
     """
     provider.user("tuser").add()
     client.sssd.domain["ldap_user_extra_attrs"] = attrs
@@ -63,9 +64,9 @@ def test_schema__ldap_extra_attrs_check_ldb(client: Client, provider: GenericPro
     :customerscenario: True
     """
     provider.user("user1").add(gid=111111, uid=100110, gecos="gecos user1", shell="/bin/sh", home="/home/user1")
-    client.sssd.domain[
-        "ldap_user_extra_attrs"
-    ] = "description:gecos, userID:uidNumber, shell:loginShell, groupID:gidNumber"
+    client.sssd.domain["ldap_user_extra_attrs"] = (
+        "description:gecos, userID:uidNumber, shell:loginShell, groupID:gidNumber"
+    )
     client.sssd.domain["ldap_id_mapping"] = "false"
     client.sssd.start()
 

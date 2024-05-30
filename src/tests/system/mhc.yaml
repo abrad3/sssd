@@ -1,3 +1,9 @@
+provisioned_topologies:
+- client
+- ipa
+- ipa-trust-samba
+- ldap
+- samba
 domains:
 - id: sssd
   hosts:
@@ -23,8 +29,8 @@ domains:
     config:
       client:
         ipa_domain: ipa.test
-        krb5_keytab: /enrollment/ipa.keytab
-        ldap_krb5_keytab: /enrollment/ipa.keytab
+        krb5_keytab: /enrollment/ipa.test.keytab
+        ldap_krb5_keytab: /enrollment/ipa.test.keytab
 
   - hostname: dc.ad.test
     role: ad
@@ -34,12 +40,9 @@ domains:
       username: Administrator@ad.test
       password: vagrant
     config:
-      binddn: Administrator@ad.test
-      bindpw: vagrant
+      adminpw: vagrant
       client:
         ad_domain: ad.test
-        krb5_keytab: /enrollment/ad.keytab
-        ldap_krb5_keytab: /enrollment/ad.keytab
 
   - hostname: dc.samba.test
     role: samba
@@ -48,8 +51,8 @@ domains:
       bindpw: Secret123
       client:
         ad_domain: samba.test
-        krb5_keytab: /enrollment/samba.keytab
-        ldap_krb5_keytab: /enrollment/samba.keytab
+        krb5_keytab: /enrollment/samba.test.keytab
+        ldap_krb5_keytab: /enrollment/samba.test.keytab
 
   - hostname: nfs.test
     role: nfs
